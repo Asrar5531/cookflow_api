@@ -1,33 +1,23 @@
-export default async function handler(req, res) {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+// Simple in-memory session store (resets on cold start, good enough for free tier) const sessions = {};
 
-  const { description } = req.body;
-  if (!description) return res.status(400).json({ error: 'description is required' });
+export default async function handler(req, res) { if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const response = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': 'Bearer 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',
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      model: 'google/gemma-2-2b-it',
-      messages: [{
-        role: 'user',
-        content: `You are a strict recipe generator for a cooking AI system.\n\nAvailable ingredients (ENGLISH ONLY): sugar, rice, salt, oil, butter, milk, chicken, mutton, potato, onion, garlic\n\nThe user has described what they want to cook. Return ONLY valid JSON with this exact structure, no explanation, no markdown:\n{\n  "recipe_name": "string",\n  "ingredients": ["string"],\n  "steps": ["string"],\n  "cook_time_minutes": number\n}\n\nRules:\n- Only use ingredients from the allowed list above\n- Understand English, Hindi, and Hinglish input\n- Fix spelling mistakes\n- If the request is not food-related, return: {"error": "Not a food request"}\n- Return ONLY the JSON object, nothing else\n\nUser request: ${description}`
-      }],
-      temperature: 0.3,
-      max_tokens: 500
-    })
-  });
+const { message, sessionId } = req.body; if (!message) return res.status(400).json({ error: 'message is required' });
 
-  const data = await response.json();
-  const raw = data.choices[0].message.content;
-  const cleaned = raw.replace(/```json/g, '').replace(/```/g, '').trim();
+const sid = sessionId || 'default';
 
-  try {
-    return res.status(200).json(JSON.parse(cleaned));
-  } catch (e) {
-    return res.status(200).json({ error: 'Parse failed', raw: cleaned });
-  }
-}
+// Get or create session history if (!sessions[sid]) sessions[sid] = [];
+
+const systemPrompt = You are an expert AI culinary advisor with deep knowledge of recipes, ingredients, cuisines, and food science. Respond like a confident chef — give direct, practical advice without asking unnecessary questions. Ask only 1 question at a time, never multiple at once. If the user request is clear, just answer it. Only ask for clarification when truly essential. Keep responses concise, actionable, and focused purely on cooking and food. Offer 2-3 lettered options (A, B, C) when it helps guide the user. No filler, no excessive follow-up questions — just solid culinary guidance. When a user asks for a dish, ask about preferences one step at a time, then show required ingredients with quantities in a list, then walk them through cooking steps.;
+
+// Add new user message to history sessions[sid].push({ role: 'user', content: message });
+
+// Keep only last 10 messages (context window) if (sessions[sid].length > 10) sessions[sid] = sessions[sid].slice(-10);
+
+const response = await fetch('https://api.mistral.ai/v1/chat/completions', { method: 'POST', headers: { 'Authorization': Bearer ${process.env.MISTRAL_API_KEY}, 'Content-Type': 'application/json' }, body: JSON.stringify({ model: 'mistral-medium-latest', messages: [ { role: 'system', content: systemPrompt }, ...sessions[sid] ] }) });
+
+const data = await response.json(); const reply = data.choices[0].message.content;
+
+// Save assistant reply to history sessions[sid].push({ role: 'assistant', content: reply });
+
+return res.status(200).json({ message: reply }); }
